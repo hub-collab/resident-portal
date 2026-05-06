@@ -26,17 +26,16 @@
     }
     h1 { font-size: 24px; margin-bottom: 8px; color: #1a1a1a; }
     p { color: #555; margin-bottom: 24px; }
-    #signInBtn {
-      background: #4285F4;
-      color: white;
-      border: none;
-      padding: 12px 24px;
-      border-radius: 6px;
+    #status {
+      margin-top: 16px;
       font-size: 16px;
-      cursor: pointer;
+      font-weight: bold;
+      padding: 12px;
+      border-radius: 8px;
     }
-    #userInfo { display: none; }
-    #status { margin-top: 16px; color: #555; font-size: 14px; }
+    .approved { background: #e6f4ea; color: #137333; }
+    .denied { background: #fce8e6; color: #c5221f; }
+    .checking { background: #e8f0fe; color: #1a73e8; }
   </style>
 </head>
 <body>
@@ -60,14 +59,16 @@
       </div>
     </div>
 
-    <div id="userInfo">
+    <div id="userInfo" style="display:none">
       <p id="welcomeMsg"></p>
-      <p id="status"></p>
+      <div id="status" class="checking">Checking membership...</div>
     </div>
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbxhVKQgngwqgeXrpyD7Mpu-ik6yQuF1PDwpUvB0KPsWmcLdEfDdKdhN8pekd3Av_E_HTg/exec';
+
     function handleCredentialResponse(response) {
       const payload = JSON.parse(atob(response.credential.split('.')[1]));
       const email = payload.email;
@@ -76,9 +77,23 @@
       document.getElementById('signInSection').style.display = 'none';
       document.getElementById('userInfo').style.display = 'block';
       document.getElementById('welcomeMsg').textContent = 'Welcome, ' + name + ' (' + email + ')';
-      document.getElementById('status').textContent = 'Checking membership...';
 
-      // Next step: we will call GAS here to verify membership
+      // Call GAS to check membership
+      fetch(GAS_URL + '?email=' + encodeURIComponent(email))
+        .then(response => response.json())
+        .then(data => {
+          const statusEl = document.getElementById('status');
+          if (data.status === 'approved') {
+            statusEl.textContent = '✅ Access granted — you are a verified resident!';
+            statusEl.className = 'approved';
+          } else {
+            statusEl.textContent = '❌ Access denied — your email is not in our system.';
+            statusEl.className = 'denied';
+          }
+        })
+        .catch(err => {
+          document.getElementById('status').textContent = '⚠️ Error checking membership. Please try again.';
+        });
     }
   </script>
 </body>
