@@ -67,7 +67,7 @@
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
-    const GAS_URL = 'https://script.google.com/macros/s/AKfycbw8YwCeoyXX8PekhjNfSVXKdBvYHINzMZJ60VZN7y3ethCPbwIJuBv4Pjle1FIUoyMO-w/exec';
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbxBz9IWDXWbehUMXw2YO0O5w7pXvqq_8ISsf2CFpHrdDLL63jjtPLbc5T5mWl69MfhWAg/exec';
 
     function handleCredentialResponse(response) {
       const payload = JSON.parse(atob(response.credential.split('.')[1]));
@@ -78,22 +78,21 @@
       document.getElementById('userInfo').style.display = 'block';
       document.getElementById('welcomeMsg').textContent = 'Welcome, ' + name + ' (' + email + ')';
 
-      // Call GAS to check membership
-      fetch(GAS_URL + '?email=' + encodeURIComponent(email))
-        .then(response => response.json())
-        .then(data => {
-          const statusEl = document.getElementById('status');
-          if (data.status === 'approved') {
-            statusEl.textContent = '✅ Access granted — you are a verified resident!';
-            statusEl.className = 'approved';
-          } else {
-            statusEl.textContent = '❌ Access denied — your email is not in our system.';
-            statusEl.className = 'denied';
-          }
-        })
-        .catch(err => {
-          document.getElementById('status').textContent = '⚠️ Error checking membership. Please try again.';
-        });
+      // Use JSONP to bypass CORS
+      const script = document.createElement('script');
+      window.gasCallback = function(data) {
+        const statusEl = document.getElementById('status');
+        if (data.status === 'approved') {
+          statusEl.textContent = '✅ Access granted — you are a verified resident!';
+          statusEl.className = 'approved';
+        } else {
+          statusEl.textContent = '❌ Access denied — your email is not in our system.';
+          statusEl.className = 'denied';
+        }
+        document.body.removeChild(script);
+      };
+      script.src = GAS_URL + '?email=' + encodeURIComponent(email) + '&callback=gasCallback';
+      document.body.appendChild(script);
     }
   </script>
 </body>
