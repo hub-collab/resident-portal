@@ -67,7 +67,9 @@
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
-    const GAS_URL = 'https://script.google.com/macros/s/AKfycbwfkZeZ2BWy8au3JPnyZZo6OONkXYhGBnJdeoeTfaFY-evOYtWUeB26Wo8XlAPPl6pEfQ/exec';
+    const SHEET_ID = '1ZRFc9_9NFLixnglojtpkojHxzwz2e2LmPRv7lvKsZzM';
+    const API_KEY = 'AIzaSyCKvYfaVSV764VjxjofPAHAlbBtXcVoFDI';
+    const RANGE = 'Members!E:E';
 
     function handleCredentialResponse(response) {
       const payload = JSON.parse(atob(response.credential.split('.')[1]));
@@ -78,21 +80,27 @@
       document.getElementById('userInfo').style.display = 'block';
       document.getElementById('welcomeMsg').textContent = 'Welcome, ' + name + ' (' + email + ')';
 
-      // Use JSONP to bypass CORS
-      const script = document.createElement('script');
-      window.gasCallback = function(data) {
-        const statusEl = document.getElementById('status');
-        if (data.status === 'approved') {
-          statusEl.textContent = '✅ Access granted — you are a verified resident!';
-          statusEl.className = 'approved';
-        } else {
-          statusEl.textContent = '❌ Access denied — your email is not in our system.';
-          statusEl.className = 'denied';
-        }
-        document.body.removeChild(script);
-      };
-      script.src = GAS_URL + '?email=' + encodeURIComponent(email) + '&callback=gasCallback';
-      document.body.appendChild(script);
+      // Call Google Sheets API directly
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${RANGE}?key=${API_KEY}`;
+
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const emails = data.values.flat().map(e => e.toLowerCase());
+          const found = emails.includes(email.toLowerCase());
+          const statusEl = document.getElementById('status');
+          if (found) {
+            statusEl.textContent = '✅ Access granted — you are a verified resident!';
+            statusEl.className = 'approved';
+          } else {
+            statusEl.textContent = '❌ Access denied — your email is not in our system.';
+            statusEl.className = 'denied';
+          }
+        })
+        .catch(err => {
+          document.getElementById('status').textContent = '⚠️ Error checking membership. Please try again.';
+          console.error(err);
+        });
     }
   </script>
 </body>
