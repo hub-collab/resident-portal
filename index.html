@@ -6,36 +6,39 @@
   <title>Resident Portal</title>
   <style>
     body {
-      font-family: sans-serif;
+      font-family: Arial, sans-serif;
       display: flex;
-      flex-direction: column;
-      align-items: center;
       justify-content: center;
+      align-items: center;
       min-height: 100vh;
       margin: 0;
-      background: #f8f9fa;
+      background: #f0f2f5;
     }
     .card {
       background: white;
       border-radius: 12px;
-      padding: 40px;
-      text-align: center;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
-      max-width: 400px;
+      padding: 2rem;
+      max-width: 480px;
       width: 90%;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      text-align: center;
     }
-    h1 { font-size: 24px; margin-bottom: 8px; color: #1a1a1a; }
-    p { color: #555; margin-bottom: 24px; }
-    #status {
-      margin-top: 16px;
-      font-size: 16px;
-      font-weight: bold;
-      padding: 12px;
-      border-radius: 8px;
+    h1 { color: #1a1a2e; margin-bottom: 0.5rem; }
+    p  { color: #555; }
+    .approved { color: #2e7d32; font-weight: bold; margin-top: 1rem; }
+    .denied   { color: #c62828; font-weight: bold; margin-top: 1rem; }
+    .checking { color: #555; margin-top: 1rem; }
+    #signOutBtn {
+      margin-top: 1.5rem;
+      padding: 0.5rem 1.2rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: white;
+      color: #555;
+      cursor: pointer;
+      font-size: 0.9rem;
     }
-    .approved { background: #e6f4ea; color: #137333; }
-    .denied { background: #fce8e6; color: #c5221f; }
-    .checking { background: #e8f0fe; color: #1a73e8; }
+    #signOutBtn:hover { background: #f5f5f5; }
   </style>
 </head>
 <body>
@@ -49,59 +52,225 @@
            data-callback="handleCredentialResponse"
            data-auto_prompt="false">
       </div>
-      <div class="g_id_signin"
-           data-type="standard"
-           data-size="large"
-           data-theme="outline"
-           data-text="sign_in_with"
-           data-shape="rectangular"
-           data-logo_alignment="left">
-      </div>
+      <div class="g_id_signin" data-type="standard"></div>
     </div>
 
     <div id="userInfo" style="display:none">
       <p id="welcomeMsg"></p>
       <div id="status" class="checking">Checking membership...</div>
+      <button id="signOutBtn" onclick="signOut()">Sign out</button>
     </div>
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
-    const SHEET_ID = '1ZRFc9_9NFLixnglojtpkojHxzwz2e2LmPRv7lvKsZzM';
-    const API_KEY = 'AIzaSyCKvYfaVSV764VjxjofPAHAlbBtXcVoFDI';
-    const RANGE = 'Members!E:E';
+    // ── CONFIG — all tunable parameters live here ─────────────────────────────
+    const CONFIG = {
+      oauthClientId:    "770250489292-h2qaulrv1df968m88m0l9t5eg72jkt6e.apps.googleusercontent.com",
+      sheetId:          "1ZRFc9_9NFLixnglojtpkojHxzwz2e2LmPRv7lvKsZzM",
+      apiKey:           "AIzaSyCKvYfaVSV764VjxjofPAHAlbBtXcVoFDI",
+      membersTab:       "Members",
+      emailColHeader:   "Email",        // header name of the email column
+      resetColHeader:   "SessionResetAfter", // header name of the reset column
+      sessionKey:       "residentPortalSession",
+      expiryTimezone:   "America/Chicago",   // CDT — change if needed
+      expiryHour:       0,    // midnight (0 = 12:00am, 14 = 2:00pm, etc.)
+      expiryMinute:     0,
+    };
+    // ─────────────────────────────────────────────────────────────────────────
 
+    // ── Compute next expiry: next occurrence of expiryHour:expiryMinute CDT ──
+    function computeExpiry() {
+      const now = new Date();
+
+      // Build today's expiry moment in the configured timezone
+      const todayStr = now.toLocaleDateString("en-CA", {
+        timeZone: CONFIG.expiryTimezone
+      }); // "YYYY-MM-DD"
+
+      const expiryStr = `${todayStr}T${String(CONFIG.expiryHour).padStart(2,"0")}:` +
+                        `${String(CONFIG.expiryMinute).padStart(2,"0")}:00`;
+
+      // Parse as a local-timezone-aware date using Intl
+      // We convert the target time in CDT to a UTC ms value
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: CONFIG.expiryTimezone,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+      });
+
+      // Helper: given a YYYY-MM-DD and HH:MM, find the UTC ms for that
+      // local-timezone moment
+      function tzToUtcMs(dateStr, hour, minute) {
+        // Create a date string that we can pin to the timezone via formatter
+        const probe = new Date(`${dateStr}T12:00:00Z`); // noon UTC as anchor
+        // Walk the formatter output to find the offset at that date
+        const parts = formatter.formatToParts(probe);
+        const p = {};
+        parts.forEach(({type, value}) => p[type] = value);
+        // Build a UTC date at the given local clock time
+        // Offset = local - utc; we approximate by adjusting
+        const localNoon = new Date(
+          `${p.year}-${p.month}-${p.day}T${String(hour).padStart(2,"0")}:` +
+          `${String(minute).padStart(2,"0")}:00Z`
+        );
+        // Find the actual UTC offset at this moment in the timezone
+        const utcNoon = new Date(`${dateStr}T12:00:00Z`);
+        const localNoonFormatted = new Date(utcNoon.toLocaleString("en-US", {
+          timeZone: CONFIG.expiryTimezone
+        }));
+        const offsetMs = utcNoon - localNoonFormatted;
+        return localNoon.getTime() + offsetMs;
+      }
+
+      let expiryMs = tzToUtcMs(todayStr, CONFIG.expiryHour, CONFIG.expiryMinute);
+
+      // If that moment has already passed today, use tomorrow
+      if (expiryMs <= now.getTime()) {
+        const tomorrow = new Date(now);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toLocaleDateString("en-CA", {
+          timeZone: CONFIG.expiryTimezone
+        });
+        expiryMs = tzToUtcMs(tomorrowStr, CONFIG.expiryHour, CONFIG.expiryMinute);
+      }
+
+      return expiryMs;
+    }
+
+    // ── Session helpers ───────────────────────────────────────────────────────
+    function saveSession(name, email) {
+      const expires = computeExpiry();
+      const savedAt = Date.now();
+      localStorage.setItem(CONFIG.sessionKey,
+        JSON.stringify({ name, email, expires, savedAt }));
+    }
+
+    function getSession() {
+      try {
+        const raw = localStorage.getItem(CONFIG.sessionKey);
+        if (!raw) return null;
+        const session = JSON.parse(raw);
+        if (Date.now() > session.expires) {
+          localStorage.removeItem(CONFIG.sessionKey);
+          return null;
+        }
+        return session;
+      } catch { return null; }
+    }
+
+    function clearSession() {
+      localStorage.removeItem(CONFIG.sessionKey);
+    }
+
+    function signOut() {
+      clearSession();
+      document.getElementById("userInfo").style.display      = "none";
+      document.getElementById("signInSection").style.display = "block";
+      document.getElementById("status").textContent          = "Checking membership...";
+      document.getElementById("status").className            = "checking";
+    }
+
+    // ── UI helper ─────────────────────────────────────────────────────────────
+    function showUserInfo(name, email) {
+      document.getElementById("signInSection").style.display = "none";
+      document.getElementById("userInfo").style.display      = "block";
+      document.getElementById("welcomeMsg").textContent =
+        "Welcome, " + name + " (" + email + ")";
+    }
+
+    // ── Google Sign-In callback ───────────────────────────────────────────────
     function handleCredentialResponse(response) {
-      const payload = JSON.parse(atob(response.credential.split('.')[1]));
-      const email = payload.email;
-      const name = payload.name;
+      const payload = JSON.parse(atob(response.credential.split(".")[1]));
+      saveSession(payload.name, payload.email);
+      showUserInfo(payload.name, payload.email);
+      checkMembership(payload.name, payload.email);
+    }
 
-      document.getElementById('signInSection').style.display = 'none';
-      document.getElementById('userInfo').style.display = 'block';
-      document.getElementById('welcomeMsg').textContent = 'Welcome, ' + name + ' (' + email + ')';
-
-      // Call Google Sheets API directly
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${RANGE}?key=${API_KEY}`;
+    // ── Membership + session-reset check ─────────────────────────────────────
+    // Fetches header row + all data rows from the Members tab in one call.
+    // Finds email and SessionResetAfter columns by header name (not letter).
+    function checkMembership(name, email) {
+      const tab = encodeURIComponent(CONFIG.membersTab);
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/` +
+                  `${CONFIG.sheetId}/values/${tab}?key=${CONFIG.apiKey}`;
 
       fetch(url)
         .then(r => r.json())
         .then(data => {
-          const emails = data.values.flat().map(e => e.toLowerCase());
-          const found = emails.includes(email.toLowerCase());
-          const statusEl = document.getElementById('status');
-          if (found) {
-            statusEl.textContent = '✅ Access granted — you are a verified resident!';
-            statusEl.className = 'approved';
-          } else {
-            statusEl.textContent = '❌ Access denied — your email is not in our system.';
-            statusEl.className = 'denied';
+          const rows = data.values || [];
+          if (rows.length < 2) return membershipResult(false, null, email);
+
+          const headers  = rows[0].map(h => h.trim());
+          const emailCol = headers.indexOf(CONFIG.emailColHeader);
+          const resetCol = headers.indexOf(CONFIG.resetColHeader);
+
+          if (emailCol === -1) {
+            console.warn(`Column "${CONFIG.emailColHeader}" not found in headers:`, headers);
+            return membershipResult(false, null, email);
           }
+
+          // Find the row matching this email
+          const match = rows.slice(1).find(row =>
+            (row[emailCol] || "").toLowerCase() === email.toLowerCase()
+          );
+
+          if (!match) return membershipResult(false, null, email);
+
+          // Check SessionResetAfter if the column exists and has a value
+          const resetVal = (resetCol !== -1 && match[resetCol])
+            ? match[resetCol].trim() : null;
+
+          membershipResult(true, resetVal, email, name);
         })
-        .catch(err => {
-          document.getElementById('status').textContent = '⚠️ Error checking membership. Please try again.';
-          console.error(err);
+        .catch(() => {
+          document.getElementById("status").textContent =
+            "⚠️ Error checking membership. Please try again.";
         });
     }
+
+    function membershipResult(found, resetVal, email, name) {
+      const el = document.getElementById("status");
+
+      if (!found) {
+        el.textContent = "❌ Access denied — your email is not in our system.";
+        el.className   = "denied";
+        return;
+      }
+
+      // Check session reset: if resetVal is a parseable date and
+      // the session was saved before it, force sign-out
+      if (resetVal) {
+        const resetMs  = Date.parse(resetVal);
+        const session  = getSession();
+        const savedAt  = session ? session.savedAt : 0;
+        if (!isNaN(resetMs) && savedAt < resetMs) {
+          clearSession();
+          el.textContent =
+            "🔒 Your session has been reset. Please sign in again.";
+          el.className = "denied";
+          setTimeout(() => {
+            document.getElementById("userInfo").style.display      = "none";
+            document.getElementById("signInSection").style.display = "block";
+            el.textContent = "Checking membership...";
+            el.className   = "checking";
+          }, 3000);
+          return;
+        }
+      }
+
+      el.textContent = "✅ Access granted — you are a verified resident!";
+      el.className   = "approved";
+    }
+
+    // ── On page load ──────────────────────────────────────────────────────────
+    window.addEventListener("DOMContentLoaded", () => {
+      const saved = getSession();
+      if (saved) {
+        showUserInfo(saved.name, saved.email);
+        checkMembership(saved.name, saved.email);
+      }
+    });
   </script>
 </body>
 </html>
