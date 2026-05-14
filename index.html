@@ -191,7 +191,7 @@
     // Fetches header row + all data rows from the Members tab in one call.
     // Finds email and SessionResetAfter columns by header name (not letter).
     function checkMembership(name, email) {
-      const tab = encodeURIComponent(CONFIG.membersTab);
+      const tab = encodeURIComponent(CONFIG.authTab);
       const url = `https://sheets.googleapis.com/v4/spreadsheets/` +
                   `${CONFIG.sheetId}/values/${tab}?key=${CONFIG.apiKey}`;
 
